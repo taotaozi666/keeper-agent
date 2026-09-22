@@ -1,0 +1,59 @@
+DELETE /cooking_blog
+
+PUT /cooking_blog
+
+PUT /cooking_blog/_mapping
+{
+  "properties": {
+    "title": { "type": "text" },
+    "description": { "type": "text" },
+    "author": { "type": "text" },
+    "date": { "type": "date", "format": "yyyy-MM-dd" },
+    "category": { "type": "text" },
+    "tags": { "type": "text" },
+    "rating": { "type": "float" }
+  }
+}
+
+POST /cooking_blog/_bulk?refresh=wait_for
+{"index":{"_id":"1"}}
+{"title":"Perfect Pancakes","description":"Fluffy pancakes for breakfast","author":"Maria Rodriguez","date":"2023-05-01","category":"Breakfast","tags":["pancakes","breakfast"],"rating":4.8}
+{"index":{"_id":"2"}}
+{"title":"Vegetarian Curry","description":"A spicy and comforting curry","author":"Aisha Khan","date":"2023-06-10","category":"Dinner","tags":["vegetarian","curry","spicy"],"rating":4.7}
+{"index":{"_id":"3"}}
+{"title":"Berry Smoothie Bowl","description":"A healthy breakfast with fresh berries","author":"Liam Turner","date":"2023-07-03","category":"Breakfast","tags":["smoothie","berries","healthy"],"rating":4.6}
+{"index":{"_id":"4"}}
+{"title":"Chocolate Lava Cake","description":"Rich chocolate cake with a gooey center","author":"Sophia Chen","date":"2023-08-12","category":"Dessert","tags":["chocolate","cake","dessert"],"rating":4.9}
+
+GET /cooking_blog/_search
+{
+  "query": {
+    "match": {
+      "description": "fluffy pancakes"
+    }
+  }
+}
+
+GET /cooking_blog/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "match": {
+            "description": "breakfast"
+          }
+        }
+      ],
+      "filter": [
+        {
+          "range": {
+            "rating": {
+              "gte": 4.7
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -59,7 +59,9 @@ class QueryService:
         try:
             # stream_mode="custom" 对应节点内部 writer(...) 写出的进度消息
             async for chunk in graph.astream(
-                input=state, context=context, stream_mode="custom"
+                input=state,
+                context=context,
+                stream_mode="custom"
             ):
                 # SSE 要求每条消息以 data: 开头，并以两个换行符结束
                 # ensure_ascii=False 保留中文进度文案，default=str 兜底处理日期等非 JSON 类型

@@ -25,7 +25,7 @@ db_dw:
 
 qdrant:
   host: localhost
-  port: 6333
+  port: 16333
   embedding_size: 1024
 
 embedding:

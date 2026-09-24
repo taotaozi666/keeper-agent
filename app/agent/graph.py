@@ -79,8 +79,11 @@ graph_builder.add_edge("merge_retrieved_info", "filter_metric")
 # graph_builder.add_edge("filter_metric", END)
 
 # 表和指标都过滤完成后，统一补充生成 SQL 所需的上下文
-graph_builder.add_edge("filter_table", "add_extra_context")
-graph_builder.add_edge("filter_metric", "add_extra_context")
+graph_builder.add_edge(
+    ["filter_table", "filter_metric"], "add_extra_context"
+)
+
+
 graph_builder.add_edge("add_extra_context", "generate_sql")
 graph_builder.add_edge("generate_sql", "validate_sql")
 

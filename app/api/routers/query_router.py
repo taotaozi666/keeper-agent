@@ -7,6 +7,7 @@
 """
 
 from typing import Annotated
+import asyncio
 
 from fastapi import APIRouter, Depends
 from starlette.responses import StreamingResponse
@@ -17,7 +18,6 @@ from app.services.query_service import QueryService
 
 # 当前模块只维护查询相关接口，避免后续所有 API 都挤在 main.py 中
 query_router = APIRouter()
-
 
 @query_router.post("/api/query")
 async def query_handler(

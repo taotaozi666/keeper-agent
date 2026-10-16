@@ -2,22 +2,17 @@
  * 前端应用主组件
  * 负责聊天会话状态、SSE 事件消费和整体页面布局
  */
-import {
-  Activity,
-  BarChart3,
-  Eraser,
-  History,
-  Leaf,
-  MessageSquarePlus,
-  Server,
-} from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Database, PanelLeft, Plus, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ConversationList } from "./components/ConversationList";
 import { Composer } from "./components/Composer";
 import { EmptyState } from "./components/EmptyState";
 import { MessageBubble } from "./components/MessageBubble";
-import { streamQuery } from "./lib/agentApi";
-import { cn, summarizeResult } from "./lib/format";
-import type { AgentEvent, ChatMessage, StepState } from "./types/agent";
+import { streamQuery, loadConversation } from "./lib/agentApi";
+import { applyQueryError } from "./lib/queryState";
+import { upsertStep } from "./lib/progress";
+import { summarizeResult, historyTurnToMessages } from "./lib/format";
+import type { AgentEvent, ChatMessage } from "./types/agent";
 
 const examples = [
   "统计 2025 年第一季度各大区的 GMV，并按 GMV 从高到低排序",
@@ -26,35 +21,43 @@ const examples = [
   "按会员等级统计 2025 年第一季度的订单数和销售额",
 ];
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "Vite /api proxy";
 
 function makeId() {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function upsertStep(steps: StepState[] = [], event: Extract<AgentEvent, { type: "progress" }>) {
-  const next = steps.filter((item) => item.step !== event.step);
-  next.push({
-    step: event.step,
-    status: event.status,
-    updatedAt: Date.now(),
-  });
-  return next;
-}
-
 export default function App() {
+  const [historyMutating, setHistoryMutating] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(() => {
+    try { return localStorage.getItem("keeper.conversation"); } catch { return null; }
+  });
+  const [restoring, setRestoring] = useState(Boolean(conversationId));
+  const [restoreError, setRestoreError] = useState("");
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [draft, setDraft] = useState("");
   const [activeController, setActiveController] = useState<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const isStreaming = Boolean(activeController);
-  const canSubmit = draft.trim().length > 0 && !isStreaming;
+  const busy = isStreaming || historyMutating || restoring || Boolean(restoreError);
 
-  const completedCount = useMemo(
-    () => messages.filter((message) => message.role === "assistant" && message.status === "done").length,
-    [messages],
-  );
+  useEffect(() => {
+    const id = conversationId;
+    if (!id || !restoring) return;
+    const controller = new AbortController();
+    loadConversation(id, controller.signal).then(({ turns }) => {
+      if (controller.signal.aborted) return;
+      setMessages(turns.flatMap(historyTurnToMessages));
+      setRestoring(false);
+    }).catch((error: Error) => {
+      if (!controller.signal.aborted) { setRestoreError(error.message); setRestoring(false); }
+    });
+    return () => controller.abort();
+  }, [conversationId, restoring]);
+
+  const canSubmit = draft.trim().length > 0 && !busy;
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -65,7 +68,7 @@ export default function App() {
 
   const startQuery = async (rawQuery = draft) => {
     const query = rawQuery.trim();
-    if (!query || isStreaming) return;
+    if (!query || busy) return;
 
     const userMessage: ChatMessage = {
       id: makeId(),
@@ -78,7 +81,7 @@ export default function App() {
     const assistantMessage: ChatMessage = {
       id: assistantId,
       role: "assistant",
-      content: "正在连接问数智能体...",
+      content: "正在连接企业数据助手...",
       createdAt: Date.now(),
       status: "streaming",
       steps: [],
@@ -90,9 +93,16 @@ export default function App() {
     setMessages((current) => [...current, userMessage, assistantMessage]);
 
     const onEvent = (event: AgentEvent) => {
+      if (event.type === "conversation") {
+        setConversationId(event.conversation_id);
+        setHistoryRevision(value => value + 1);
+        try { localStorage.setItem("keeper.conversation", event.conversation_id); } catch { /* storage unavailable */ }
+        return;
+      }
       setMessages((current) =>
         current.map((message) => {
           if (message.id !== assistantId) return message;
+          if (message.status !== "streaming") return message;
 
           if (event.type === "progress") {
             return {
@@ -102,6 +112,22 @@ export default function App() {
             };
           }
 
+          if (event.type === "artifact") {
+            return { ...message, files: [...(message.files ?? []), event.file] };
+          }
+          if (event.type === "done") {
+            return { ...message, status: event.error ? "error" : "done", content: event.message,
+              results: event.results, files: event.files, error: event.error,
+              responseType: event.results.length ? "result" : event.clarification ? "clarification" : "reply" };
+          }
+          if (event.type === "result" && event.terminal === false) {
+            return { ...message, results: [...(message.results ?? []), {
+              query_result_id: event.query_result_id ?? "", query: event.query ?? "", data: event.data,
+            }] };
+          }
+          if (event.type === "clarification" || event.type === "reply") {
+            return { ...message, status: "done", responseType: event.type, content: event.message };
+          }
           if (event.type === "result") {
             return {
               ...message,
@@ -122,30 +148,18 @@ export default function App() {
     };
 
     try {
-      await streamQuery(query, { signal: controller.signal, onEvent });
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantId && message.status === "streaming"
-            ? { ...message, status: "done", content: "流程已结束，后端未返回查询结果。" }
-            : message,
-        ),
-      );
+      await streamQuery(query, { signal: controller.signal, onEvent, conversationId });
     } catch (error) {
-      const isAbort = error instanceof DOMException && error.name === "AbortError";
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantId
-            ? {
-                ...message,
-                status: isAbort ? "done" : "error",
-                content: isAbort ? "已停止本次查询。" : "无法连接问数接口。",
-                error: isAbort ? undefined : error instanceof Error ? error.message : String(error),
-              }
+            ? applyQueryError(message, error)
             : message,
         ),
       );
     } finally {
       setActiveController(null);
+      setHistoryRevision(value => value + 1);
     }
   };
 
@@ -153,136 +167,73 @@ export default function App() {
     activeController?.abort();
   };
 
+  const selectConversation = (id: string) => {
+    if (isStreaming || historyMutating || (id === conversationId && !restoreError)) return;
+    setSidebarOpen(false);
+    setConversationId(id);
+    setMessages([]);
+    setDraft("");
+    setRestoreError("");
+    setRestoring(true);
+    try { localStorage.setItem("keeper.conversation", id); } catch { /* storage unavailable */ }
+  };
+
   const clearConversation = () => {
     if (isStreaming) return;
+    setSidebarOpen(false);
+    setConversationId(null);
+    setRestoring(false);
+    setRestoreError("");
+    try { localStorage.removeItem("keeper.conversation"); } catch { /* storage unavailable */ }
     setMessages([]);
     setDraft("");
   };
 
   return (
-    <div className="h-dvh overflow-hidden bg-parchment text-ink">
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(90deg,rgba(32,32,29,0.045)_1px,transparent_1px),linear-gradient(rgba(32,32,29,0.035)_1px,transparent_1px)] bg-[size:48px_48px]" />
-      <div className="pointer-events-none fixed inset-0 grain" />
-
-      <div className="relative grid h-full min-h-0 overflow-hidden lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="hidden min-h-0 border-r border-ink/10 bg-[#efe6d8]/85 backdrop-blur lg:flex lg:flex-col">
-          <div className="border-b border-ink/10 px-5 py-5">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center bg-ink text-parchment">
-                <BarChart3 className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <div>
-                <div className="text-base font-semibold tracking-[0.02em]">电商问数</div>
-                <div className="text-xs text-ink/50">shopkeeper-agent</div>
-              </div>
+    <div className="flex h-dvh overflow-hidden bg-white font-sans text-ink">
+      {sidebarOpen && <button type="button" aria-label="关闭侧栏" onClick={() => setSidebarOpen(false)} className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[2px] md:hidden" />}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-[272px] shrink-0 flex-col bg-[#f7f8fa] transition-transform duration-200 md:static md:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="flex h-20 shrink-0 items-center gap-3 px-5">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-white"><Database className="h-[18px] w-[18px]" /></div>
+          <div className="flex-1"><div className="text-lg font-semibold tracking-tight">Keeper</div><div className="text-[11px] text-ink/45">企业数据助手</div></div>
+          <button type="button" aria-label="关闭侧栏" onClick={() => setSidebarOpen(false)} className="rounded-lg p-2 text-ink/50 hover:bg-black/5 md:hidden"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="px-3 pb-5">
+          <button type="button" onClick={clearConversation} disabled={isStreaming || historyMutating}
+            className="flex w-full items-center gap-3 rounded-xl border border-black/[0.07] bg-white px-4 py-3 text-sm font-medium shadow-sm transition hover:bg-white/60 disabled:opacity-40">
+            <Plus className="h-4 w-4" />新会话
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+          <ConversationList selectedId={conversationId} disabled={isStreaming} revision={historyRevision} onSelect={selectConversation}
+            onMutating={setHistoryMutating} onDeleted={id => { if (id === conversationId) clearConversation(); }} />
+        </div>
+        <div className="m-3 flex items-center gap-3 rounded-2xl border border-black/5 bg-white/70 p-3">
+          <div className="grid h-9 w-9 place-items-center rounded-full bg-moss/10 text-sm font-semibold text-moss">K</div>
+          <div><p className="text-sm font-medium">我的工作空间</p><p className="mt-0.5 text-xs text-ink/40">数据洞察，从一个问题开始</p></div>
+        </div>
+      </aside>
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-3 px-4 sm:px-7">
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="打开历史会话" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)} className="rounded-xl p-2 text-ink/60 hover:bg-black/5 md:hidden"><PanelLeft className="h-5 w-5" /></button>
+            <span className="text-base font-medium text-ink/75">Keeper <span className="ml-1 hidden text-sm font-normal text-ink/40 sm:inline">企业数据助手</span></span>
+          </div>
+          <span className="flex items-center gap-2 rounded-full bg-[#f7f8fa] px-3 py-1.5 text-xs text-ink/50"><span className={`h-1.5 w-1.5 rounded-full ${isStreaming ? "animate-pulse bg-moss" : "bg-moss/60"}`} />{isStreaming ? "处理中" : "随时为你解答"}</span>
+        </header>
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          {restoring && <p role="status" className="mx-auto max-w-3xl px-6 py-8 text-sm text-ink/50">正在恢复会话…</p>}
+          {restoreError && <p role="alert" className="mx-auto max-w-3xl rounded-2xl bg-red-50 p-4 text-sm text-red-700">{restoreError}</p>}
+          {!restoring && !restoreError && (messages.length === 0 ? (
+            <EmptyState examples={examples} onUseExample={(example) => setDraft(example)} />
+          ) : (
+            <div className="mx-auto flex w-full max-w-[860px] flex-col gap-9 px-5 py-8 sm:px-8">
+              {messages.map(message => <MessageBubble key={message.id} message={message} conversationId={conversationId} />)}
             </div>
-          </div>
-
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
-            <button
-              type="button"
-              onClick={clearConversation}
-              disabled={isStreaming}
-              className="flex h-11 w-full items-center justify-center gap-2 bg-ink text-sm font-semibold text-parchment transition hover:bg-soot disabled:cursor-not-allowed disabled:bg-ink/35"
-            >
-              <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
-              新会话
-            </button>
-
-            <section>
-              <div className="mb-2 flex items-center gap-2 px-1 text-xs font-semibold uppercase tracking-[0.16em] text-ink/45">
-                <History className="h-3.5 w-3.5" aria-hidden="true" />
-                样例
-              </div>
-              <div className="space-y-2">
-                {examples.map((example) => (
-                  <button
-                    key={example}
-                    type="button"
-                    disabled={isStreaming}
-                    onClick={() => startQuery(example)}
-                    className="w-full border border-ink/10 bg-white/42 px-3 py-3 text-left text-sm leading-5 text-ink/75 transition hover:border-moss/35 hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-55"
-                  >
-                    {example}
-                  </button>
-                ))}
-              </div>
-            </section>
-          </div>
-
-          <div className="border-t border-ink/10 p-4">
-            <div className="grid gap-2 text-xs text-ink/55">
-              <div className="flex items-center justify-between gap-3">
-                <span className="inline-flex items-center gap-2">
-                  <Server className="h-3.5 w-3.5" aria-hidden="true" />
-                  API
-                </span>
-                <span className="truncate font-mono">{API_BASE_URL}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-2">
-                  <Activity className="h-3.5 w-3.5" aria-hidden="true" />
-                  完成
-                </span>
-                <span>{completedCount}</span>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        <main className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-          <header className="flex h-16 shrink-0 items-center justify-between border-b border-ink/10 bg-parchment/88 px-4 backdrop-blur lg:px-6">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center bg-moss text-white lg:hidden">
-                <BarChart3 className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-ink">智能数据分析 Agent</div>
-                <div className="truncate text-xs text-ink/45">FastAPI SSE / LangGraph</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={clearConversation}
-              disabled={messages.length === 0 || isStreaming}
-              className={cn(
-                "grid h-9 w-9 place-items-center rounded-full text-ink/55 transition hover:bg-ink/5 hover:text-ink disabled:cursor-not-allowed disabled:opacity-35",
-              )}
-              title="清空"
-              aria-label="清空"
-            >
-              <Eraser className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </header>
-
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            {messages.length === 0 ? (
-              <EmptyState examples={examples} onUseExample={(example) => setDraft(example)} />
-            ) : (
-              <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 lg:px-8">
-                {messages.map((message) => (
-                  <MessageBubble key={message.id} message={message} />
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-ink/10 bg-[#efe6d8]/45 px-4 py-2 text-center text-xs text-ink/45">
-            <span className="inline-flex items-center gap-2">
-              <Leaf className="h-3.5 w-3.5 text-moss" aria-hidden="true" />
-              {isStreaming ? "运行中" : "就绪"}
-            </span>
-          </div>
-          <Composer
-            value={draft}
-            disabled={!canSubmit}
-            isStreaming={isStreaming}
-            onChange={setDraft}
-            onSubmit={() => startQuery()}
-            onStop={stopQuery}
-          />
-        </main>
-      </div>
+          ))}
+        </div>
+        <Composer value={draft} disabled={!canSubmit} isStreaming={isStreaming} onChange={setDraft} onSubmit={() => startQuery()} onStop={stopQuery} />
+      </main>
     </div>
   );
 }

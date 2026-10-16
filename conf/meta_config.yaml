@@ -170,7 +170,8 @@ metrics:
       - fact_order.order_amount
     alias: [成交总额, 订单总额]
   - name: AOV
-    description: 全称Average Order Value，表示所有订单的成交金额平均值。
+    description: 全称Average Order Value，客单价或平均订单金额。计算口径为 SUM(fact_order.order_amount) / NULLIF(COUNT(DISTINCT fact_order.order_id), 0)，按查询指定的时间范围与筛选条件统计；不是每件商品的平均单价。
     relevant_columns:
-      - fact_order.order_quantity
-    alias: [平均单价, 平均订单金额]
+      - fact_order.order_amount
+      - fact_order.order_id
+    alias: [客单价, 平均订单金额]

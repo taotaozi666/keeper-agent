@@ -60,4 +60,7 @@ Thumbs.db
 # Local TEI embedding model files (large)
 docker/embedding/
 logs/app.log
+evals/reports/
 conf/app_config.yaml
+
+/data/artifacts/

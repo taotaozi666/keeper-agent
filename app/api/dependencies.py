@@ -21,10 +21,20 @@ from app.clients.mysql_client_manager import (
 from app.clients.qdrant_client_manager import qdrant_client_manager
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
+from app.repositories.mysql.meta.conversation_repository import ConversationRepository
 from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepository
 from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
+from app.services.artifact_service import ArtifactService
 from app.services.query_service import QueryService
+
+
+def get_artifact_service():
+    return ArtifactService(meta_mysql_client_manager.engine)
+
+
+def get_conversation_repository():
+    return ConversationRepository(meta_mysql_client_manager.engine)
 
 
 async def get_meta_session():
@@ -89,18 +99,14 @@ async def get_query_service(
     embedding_client: Annotated[
         HuggingFaceEndpointEmbeddings, Depends(get_embedding_client)
     ],
-    dw_mysql_repository: Annotated[
-        DWMySQLRepository, Depends(get_dw_mysql_repository)
-    ],
+    dw_mysql_repository: Annotated[DWMySQLRepository, Depends(get_dw_mysql_repository)],
     column_qdrant_repository: Annotated[
         ColumnQdrantRepository, Depends(get_column_qdrant_repository)
     ],
     metric_qdrant_repository: Annotated[
         MetricQdrantRepository, Depends(get_metric_qdrant_repository)
     ],
-    value_es_repository: Annotated[
-        ValueESRepository, Depends(get_value_es_repository)
-    ],
+    value_es_repository: Annotated[ValueESRepository, Depends(get_value_es_repository)],
 ) -> QueryService:
     """组装一次查询所需的业务服务"""
 
@@ -112,4 +118,6 @@ async def get_query_service(
         column_qdrant_repository=column_qdrant_repository,
         metric_qdrant_repository=metric_qdrant_repository,
         value_es_repository=value_es_repository,
+        conversation_repository=get_conversation_repository(),
+        artifact_service=get_artifact_service(),
     )

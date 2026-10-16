@@ -10,7 +10,8 @@ export default {
     extend: {
       fontFamily: {
         sans: [
-          '"LXGW WenKai Screen"',
+          "Inter",
+          "system-ui",
           '"Noto Sans SC"',
           '"PingFang SC"',
           '"Microsoft YaHei"',
@@ -19,8 +20,8 @@ export default {
         mono: ['"JetBrains Mono"', '"SFMono-Regular"', "Consolas", "monospace"],
       },
       colors: {
-        parchment: "#f7f1e8",
-        ink: "#20201d",
+        parchment: "#ffffff",
+        ink: "#242629",
         soot: "#2d2925",
         moss: "#2f6b4f",
         brass: "#b48638",
@@ -29,7 +30,7 @@ export default {
       },
       boxShadow: {
         line: "0 1px 0 rgba(32, 32, 29, 0.08)",
-        panel: "0 24px 70px rgba(45, 41, 37, 0.16)",
+        panel: "0 4px 24px rgba(20, 30, 40, 0.06)",
       },
     },
   },

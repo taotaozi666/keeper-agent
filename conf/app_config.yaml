@@ -39,6 +39,11 @@ es:
   index_name: data_agent
 
 llm:
+  stage_enable_thinking:
+    tool_agent: false
+    prepare_query: false
+    select_context: false
+  log_conversations: true
   model_name: qwen3.8-max
   api_key: ${oc.env:LLM_API_KEY}
   base_url: https://ws-ve7kc5ges5252p70.cn-beijing.maas.aliyuncs.com/compatible-mode/v1

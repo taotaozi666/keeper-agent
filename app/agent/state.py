@@ -63,8 +63,17 @@ class DBInfoState(TypedDict):
 class DataAgentState(TypedDict):
     """一次问数链路中的核心状态"""
 
-    query: str  # 用户输入的查询
+    original_query: str
+    memory_enabled: bool
+    conversation_context: dict
+    query_context: dict
+    action: str  # query / clarify / reply
+    query: str  # 补全后的查询；下游统一使用
     keywords: list[str]  # 抽取的关键词
+    column_terms: list[str]  # 统一扩展后的字段检索词
+    metric_terms: list[str]  # 统一扩展后的指标检索词
+    value_terms: list[str]  # 统一扩展后的取值检索词
+    term_embeddings: dict[str, list[float]]  # 当前请求内共享的去重检索词向量
     retrieved_column_infos: list[ColumnInfo]  # 检索到的字段信息
     retrieved_metric_infos: list[MetricInfo]  # 检索到的指标信息
     retrieved_value_infos: list[ValueInfo]  # 检索到的取值信息
@@ -76,4 +85,5 @@ class DataAgentState(TypedDict):
 
     sql: str  # 生成或校正后的SQL
 
-    error: str  # 校验SQL时出现的错误信息
+    error: str | None  # 校验SQL时出现的错误信息
+    repair_count: int  # 已完成的 SQL 修复次数

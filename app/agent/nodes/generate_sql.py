@@ -12,6 +12,8 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.llm import llm
+from app.agent.observability import invoke_model
+from app.agent.prompt_context import prompt_tables
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.prompt.prompt_loader import load_prompt
@@ -26,7 +28,7 @@ async def generate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]
 
     try:
         # 这些上下文都由前置节点准备完成，模型只在给定表 字段 指标口径范围内生成 SQL
-        table_infos = state["table_infos"]
+        table_infos = prompt_tables(state)
         metric_infos = state["metric_infos"]
         date_info = state["date_info"]
         db_info = state["db_info"]
@@ -44,9 +46,11 @@ async def generate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]
         )
         # SQL 生成节点只需要纯文本 SQL，不能要求模型输出 JSON 或 Markdown 代码块
         output_parser = StrOutputParser()
-        chain = prompt | llm | output_parser
 
-        result = await chain.ainvoke(
+        result = await invoke_model(
+            prompt,
+            llm,
+            output_parser,
             {
                 # YAML 更适合放进提示词：保留嵌套结构 顺序和中文说明，方便模型理解表字段关系
                 "table_infos": yaml.dump(
@@ -58,11 +62,12 @@ async def generate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]
                 "date_info": yaml.dump(date_info, allow_unicode=True, sort_keys=False),
                 "db_info": yaml.dump(db_info, allow_unicode=True, sort_keys=False),
                 "query": query,
-            }
+            },
+            stage="generate_sql",
         )
-        logger.info(f"生成的SQL：{result}")
+        logger.info("模型生成SQL output_chars={} sql=\n{}", len(result), result)
         writer({"type": "progress", "step": step, "status": "success"})
-        return {"sql": result}
+        return {"sql": result, "repair_count": 0}
 
     except Exception as e:
         logger.error(f"{step} failed: {e}")

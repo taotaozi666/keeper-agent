@@ -8,7 +8,15 @@
 """
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointIdsList,
+    PointStruct,
+    VectorParams,
+)
 
 from app.conf.app_config import app_config
 from app.entities.metric_info import MetricInfo
@@ -65,3 +73,33 @@ class MetricQdrantRepository:
         )
         # Qdrant point 的 payload 中保存的是指标元数据，业务层继续使用 MetricInfo
         return [MetricInfo(**point.payload) for point in result.points]
+
+    async def replace_metric_points(self, metric_id, ids, embeddings, payloads):
+        """先写新向量，再清理该指标旧点；不删除集合或其他指标。"""
+        condition = Filter(
+            must=[FieldCondition(key="id", match=MatchValue(value=metric_id))]
+        )
+        old_ids = []
+        offset = None
+        while True:
+            points, offset = await self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=condition,
+                offset=offset,
+                limit=100,
+                with_payload=False,
+                with_vectors=False,
+            )
+            old_ids.extend(point.id for point in points)
+            if offset is None:
+                break
+        await self.upsert(ids, embeddings, payloads)
+        stale = [
+            point_id for point_id in old_ids if str(point_id) not in set(map(str, ids))
+        ]
+        if stale:
+            await self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=PointIdsList(points=stale),
+                wait=True,
+            )

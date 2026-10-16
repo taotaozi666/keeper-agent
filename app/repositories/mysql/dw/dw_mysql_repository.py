@@ -7,8 +7,32 @@
 SQL 生成闭环中的数据库环境读取 SQL 校验和最终查询执行也集中放在这里
 """
 
+import re
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def ensure_read_query(sql):
+    """保守限制单条 SELECT；数据库只读事务仍是执行层约束。"""
+    if "/*!" in sql:
+        raise ValueError("不支持可执行 SQL 注释")
+    cleaned = re.sub(
+        r"'([^'\\]|\\.|'')*'|\"([^\"\\]|\\.|\"\")*\"|`[^`]*`", "identifier", sql
+    )
+    cleaned = (
+        re.sub(r"/\*.*?\*/|--[^\n]*|#[^\n]*", " ", cleaned, flags=re.S)
+        .strip()
+        .rstrip(";")
+    )
+    if not re.match(r"^(SELECT|WITH)\b", cleaned, re.I) or ";" in cleaned:
+        raise ValueError("只允许单条只读查询")
+    if re.search(
+        r"\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|TRUNCATE|CALL|DO|SET|COMMIT|ROLLBACK|GRANT|REVOKE|INTO|OUTFILE|DUMPFILE|LOAD_FILE|SLEEP|BENCHMARK|LOCK)\b",
+        cleaned,
+        re.I,
+    ):
+        raise ValueError("查询包含不支持的操作")
 
 
 class DWMySQLRepository:
@@ -45,10 +69,18 @@ class DWMySQLRepository:
 
     async def validate(self, sql: str):
         """用 EXPLAIN 让数据库提前解析 SQL，发现语法 表名 字段名等错误"""
+        ensure_read_query(sql)
         sql = f"explain {sql}"
         await self.session.execute(text(sql))
 
     async def run(self, sql: str) -> list[dict]:
         """执行最终 SQL，并把 SQLAlchemy 行对象转换成前端更易消费的字典列表"""
-        result = await self.session.execute(text(sql))
-        return [dict(row) for row in result.mappings().fetchall()]
+        ensure_read_query(sql)
+        result = await self.session.stream(text(sql))
+        try:
+            rows = await result.mappings().fetchmany(10001)
+            if len(rows) > 10000:
+                raise ValueError("查询超过 10000 行，请缩小范围或先聚合")
+            return [dict(row) for row in rows]
+        finally:
+            await result.close()

@@ -5,6 +5,8 @@ SQL 执行节点
 它是当前 SQL 闭环的结束节点，执行完成后流程进入 END。
 """
 
+import reprlib
+
 from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
@@ -26,7 +28,12 @@ async def run_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]):
 
         # 真实数据库访问统一封装在仓储层，节点只负责从状态取 SQL 并触发执行
         result = await dw_mysql_repository.run(sql)
-        logger.info(f"SQL执行结果：{result}")
+        logger.info("SQL执行完成 rows={}", len(result))
+        preview = reprlib.Repr()
+        preview.maxlist = 3
+        preview.maxdict = 5
+        preview.maxstring = 120
+        logger.debug("SQL结果样例（截断）: {}", preview.repr(result[:3]))
         writer({"type": "progress", "step": step, "status": "success"})
         writer({"type": "result", "data": result})
 

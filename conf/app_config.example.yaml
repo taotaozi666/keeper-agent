@@ -1,0 +1,45 @@
+# 本地开发配置，与 docker/docker-compose.yaml 对齐。
+# 复制为 app_config.yaml 后按需修改，不要提交真实凭据。
+logging:
+  console:
+    enable: true
+    level: INFO
+  file:
+    enable: true
+    level: INFO
+    path: logs
+    rotation: 10 MB
+    retention: 7 days
+db_meta:
+  host: 127.0.0.1
+  port: 3307
+  user: didilili
+  password: ${oc.env:MYSQL_PASSWORD,dili123}
+  database: meta
+db_dw:
+  host: 127.0.0.1
+  port: 3307
+  user: didilili
+  password: ${oc.env:MYSQL_PASSWORD,dili123}
+  database: dw
+qdrant:
+  host: 127.0.0.1
+  port: 16333
+  embedding_size: 1024
+embedding:
+  host: 127.0.0.1
+  port: 8081
+  model: bge-large-zh-v1.5
+es:
+  host: 127.0.0.1
+  port: 9200
+  index_name: value_index
+llm:
+  # 开启后在 INFO 日志打印完整提示词和模型回复，可能包含业务数据。
+  log_conversations: false
+  # 支持 enable_thinking 的接口可按阶段覆盖；其他服务商保持 {}。
+  # 例如 {prepare_query: false, select_context: false, tool_agent: false}；仅用于支持该参数的服务
+  stage_enable_thinking: {}
+  model_name: ${oc.env:LLM_MODEL_NAME}
+  api_key: ${oc.env:LLM_API_KEY}
+  base_url: ${oc.env:LLM_BASE_URL}

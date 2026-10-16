@@ -5,6 +5,7 @@
 都会汇总到这个对象里，再继续流向元数据库与后续检索链路
 """
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,3 +22,17 @@ class ColumnInfo:
     description: str
     alias: list[str]
     table_id: str
+
+    def __post_init__(self):
+        # 防御性处理历史索引中的 JSON 字符串，阻止错误类型进入图状态。
+        for name in ("examples", "alias"):
+            value = getattr(self, name)
+            if isinstance(value, str):
+                value = json.loads(value)
+            if value is None:
+                value = []
+            if not isinstance(value, list):
+                raise ValueError(f"{self.id}.{name} 必须是数组")
+            if name == "alias" and any(not isinstance(item, str) for item in value):
+                raise ValueError(f"{self.id}.alias 必须是字符串数组")
+            setattr(self, name, value)

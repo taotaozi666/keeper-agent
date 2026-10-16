@@ -17,40 +17,42 @@ type FlowNode = {
 
 const nodes: FlowNode[] = [
   { step: "抽取关键词", x: 410, y: 20 },
-  { step: "召回字段信息", x: 150, y: 112 },
-  { step: "召回指标信息", x: 410, y: 112 },
-  { step: "召回字段取值", x: 670, y: 112 },
-  { step: "合并召回信息", x: 410, y: 214 },
-  { step: "过滤指标信息", x: 290, y: 318 },
-  { step: "过滤表信息", x: 530, y: 318 },
-  { step: "增加额外上下文", x: 410, y: 422, w: 176 },
-  { step: "生成SQL", x: 410, y: 526 },
-  { step: "校验SQL", x: 410, y: 630 },
-  { step: "校正SQL", x: 670, y: 630 },
-  { step: "执行SQL", x: 410, y: 724 },
+  { step: "统一扩展检索词", x: 410, y: 100, w: 190 },
+  { step: "批量向量化检索词", x: 330, y: 190, w: 210 },
+  { step: "召回字段信息", x: 150, y: 280 },
+  { step: "召回指标信息", x: 410, y: 280 },
+  { step: "召回字段取值", x: 670, y: 280 },
+  { step: "合并召回信息", x: 410, y: 380 },
+  { step: "联合筛选表字段与指标", x: 410, y: 470, w: 230 },
+  { step: "添加额外上下文", x: 410, y: 560, w: 190 },
+  { step: "生成SQL", x: 410, y: 650 },
+  { step: "校验SQL", x: 410, y: 740 },
+  { step: "校正SQL", x: 670, y: 740 },
+  { step: "执行SQL", x: 410, y: 840 },
 ];
 
 const connectors = [
-  "M410 60 L410 84 L150 84 L150 106",
-  "M410 60 L410 106",
-  "M410 60 L410 84 L670 84 L670 106",
-  "M150 152 L150 178 L410 178 L410 208",
-  "M410 152 L410 208",
-  "M670 152 L670 178 L410 178 L410 208",
-  "M410 254 L410 282 L290 282 L290 312",
-  "M410 254 L410 282 L530 282 L530 312",
-  "M290 358 L290 386 L410 386 L410 416",
-  "M530 358 L530 386 L410 386 L410 416",
-  "M410 462 L410 520",
-  "M410 566 L410 624",
-  "M410 670 L410 718",
-  "M488 650 L586 650",
-  "M670 670 L670 696 L410 696 L410 718",
+  "M410 60 L410 94",
+  "M410 140 L410 164 L330 164 L330 184",
+  "M410 140 L410 164 L670 164 L670 274",
+  "M330 230 L330 250 L150 250 L150 274",
+  "M330 230 L330 250 L410 250 L410 274",
+  "M150 320 L150 350 L410 350 L410 374",
+  "M410 320 L410 374",
+  "M670 320 L670 350 L410 350 L410 374",
+  "M410 420 L410 464",
+  "M410 510 L410 554",
+  "M410 600 L410 644",
+  "M410 690 L410 734",
+  "M410 780 L410 834",
+  "M488 760 L586 760",
+  "M670 780 L670 806 L510 806 L510 772 L494 772",
 ];
 
 const branchLabels = [
-  { text: "有误", x: 530, y: 642 },
-  { text: "无误", x: 366, y: 704 },
+  { text: "有误且未达上限", x: 500, y: 730 },
+  { text: "通过", x: 366, y: 815 },
+  { text: "重新校验 · 最多修复 2 次", x: 540, y: 830 },
 ];
 
 function getStatusMap(steps: StepState[]) {
@@ -90,7 +92,7 @@ function FlowNodeCard({ node, status }: { node: FlowNode; status: FlowStatus }) 
     >
       <div
         className={cn(
-          "flex h-10 items-center gap-2 border px-3 text-sm font-semibold shadow-line transition",
+          "flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold shadow-line transition",
           status === "pending" && "border-ink/10 bg-white/55 text-ink/45",
           status === "running" && "border-brass/45 bg-brass/15 text-ink",
           status === "success" && "border-moss/25 bg-moss/10 text-ink",
@@ -117,20 +119,35 @@ function FlowNodeCard({ node, status }: { node: FlowNode; status: FlowStatus }) 
 export function StepRail({ steps = [] }: { steps?: StepState[] }) {
   if (steps.length === 0) return null;
 
+  const toolSteps = steps.filter(item => !/^查询 \d+ · /.test(item.step));
+  const groups = new Map<string, StepState[]>();
+  for (const item of steps) {
+    const match = item.step.match(/^(查询 \d+) · (.*)$/);
+    if (match) groups.set(match[1], [...(groups.get(match[1]) ?? []), { ...item, step: match[2] }]);
+  }
+  if (groups.size || steps.some(item => item.step === "任务规划" || item.step.startsWith("工具 "))) {
+    return <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap gap-2">{toolSteps.map(item => <div key={item.step} className="flex items-center gap-2 rounded-xl bg-white/70 px-3 py-2 text-xs">
+        <NodeIcon status={item.status} /><span>{item.step}</span>
+      </div>)}</div>
+      {[...groups].map(([label, items]) => <div key={label}><p className="text-xs text-ink/55">{label}</p><StepRail steps={items} /></div>)}
+    </div>;
+  }
+
   const statusMap = getStatusMap(steps);
 
   return (
-    <section className="mt-4 border border-ink/10 bg-white/40 px-3 py-4 shadow-line">
+    <section className="mt-4 rounded-2xl border border-ink/10 bg-white/40 px-3 py-4 shadow-line">
       <div className="mb-3 flex items-center justify-between gap-3 px-1">
         <div className="text-sm font-semibold text-ink">执行流程</div>
-        <div className="text-xs text-ink/45">LangGraph</div>
+        <div className="text-xs text-ink/45">LangGraph · 达到修复上限后终止</div>
       </div>
 
       <div className="overflow-x-auto">
-        <div className="relative mx-auto h-[780px] w-[820px]">
+        <div className="relative mx-auto h-[900px] w-[820px]">
           <svg
             className="pointer-events-none absolute inset-0 h-full w-full"
-            viewBox="0 0 820 780"
+            viewBox="0 0 820 900"
             fill="none"
             aria-hidden="true"
           >

@@ -18,7 +18,6 @@ from omegaconf import OmegaConf
 from app.conf.meta_config import MetaConfig
 from app.core.log import logger
 from app.entities.column_info import ColumnInfo
-from app.entities.column_metric import ColumnMetric
 from app.entities.metric_info import MetricInfo
 from app.entities.table_info import TableInfo
 from app.entities.value_info import ValueInfo
@@ -186,7 +185,6 @@ class MetaKnowledgeService:
     ) -> list[MetricInfo]:
         """把配置里的指标信息和字段依赖关系写入 Meta MySQL"""
         metric_infos: list[MetricInfo] = []
-        column_metrics: list[ColumnMetric] = []
 
         for metric in meta_config.metrics:
             # MetricInfo 表达指标本身，当前直接用指标名作为稳定业务 id
@@ -198,15 +196,9 @@ class MetaKnowledgeService:
                 alias=metric.alias,
             )
             metric_infos.append(metric_info)
-            for column in metric.relevant_columns:
-                # ColumnMetric 单独表达“某个指标依赖某个字段”这层关系
-                column_metric = ColumnMetric(column_id=column, metric_id=metric.name)
-                column_metrics.append(column_metric)
-
         # 指标本身和字段关系要放在同一笔事务里，避免只写入其中一部分
         async with self.meta_mysql_repository.session.begin():
-            self.meta_mysql_repository.save_metric_infos(metric_infos)
-            self.meta_mysql_repository.save_column_metrics(column_metrics)
+            await self.meta_mysql_repository.upsert_metric_infos(metric_infos)
 
         return metric_infos
 
@@ -216,28 +208,23 @@ class MetaKnowledgeService:
 
         points: list[dict] = []
         for metric_info in metric_infos:
-            # 和字段一样，一个指标也会拆成名字 描述 别名这几类语义入口
-            points.append(
-                {
-                    "id": uuid.uuid4(),
-                    "embedding_text": metric_info.name,
-                    "payload": asdict(metric_info),
-                }
+            texts = [
+                ("name", metric_info.name),
+                ("description", metric_info.description),
+            ]
+            texts.extend(
+                (f"alias:{alias}", alias) for alias in dict.fromkeys(metric_info.alias)
             )
-
-            points.append(
-                {
-                    "id": uuid.uuid4(),
-                    "embedding_text": metric_info.description,
-                    "payload": asdict(metric_info),
-                }
-            )
-
-            for alia in metric_info.alias:
+            for kind, content in texts:
                 points.append(
                     {
-                        "id": uuid.uuid4(),
-                        "embedding_text": alia,
+                        "id": str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                f"keeper:metric:{metric_info.id}:{kind}",
+                            )
+                        ),
+                        "embedding_text": content,
                         "payload": asdict(metric_info),
                     }
                 )
@@ -254,19 +241,27 @@ class MetaKnowledgeService:
             )
             embeddings.extend(batch_embeddings)
 
-        ids = [point["id"] for point in points]
-        payloads = [point["payload"] for point in points]
+        for metric in metric_infos:
+            indices = [
+                i
+                for i, point in enumerate(points)
+                if point["payload"]["id"] == metric.id
+            ]
+            await self.metric_qdrant_repository.replace_metric_points(
+                metric.id,
+                [points[i]["id"] for i in indices],
+                [embeddings[i] for i in indices],
+                [points[i]["payload"] for i in indices],
+            )
 
-        await self.metric_qdrant_repository.upsert(ids, embeddings, payloads)
-
-    async def build(self, config_path: Path):
+    async def build(self, config_path: Path, metrics_only: bool = False):
         """读取配置并依次构建 Meta MySQL Qdrant 和 ES 中的元数据索引"""
         context = OmegaConf.load(config_path)
         schema = OmegaConf.structured(MetaConfig)
         meta_config: MetaConfig = OmegaConf.to_object(OmegaConf.merge(schema, context))
 
         # 根据配置文件判断后续要进入哪条构建链路
-        if meta_config.tables:
+        if meta_config.tables and not metrics_only:
             # 将表信息和字段信息保存到 Meta MySQL
             column_infos = await self._save_tables_to_meta_db(meta_config)
             logger.info("保存表信息和字段信息到 Meta MySQL")

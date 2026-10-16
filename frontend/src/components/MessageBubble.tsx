@@ -3,13 +3,18 @@
  * 组合展示用户问题、智能体回复、执行流程和结果表格
  */
 import { Bot, Copy, UserRound } from "lucide-react";
+import { FileCard } from "./FileCard";
 import { ResultTable } from "./ResultTable";
 import { StepRail } from "./StepRail";
+import { ProgressList } from "./ProgressList";
 import { cn, formatTime, toClipboardText } from "../lib/format";
+import { resolveProgressView } from "../lib/progress";
 import type { ChatMessage } from "../types/agent";
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+export function MessageBubble({ message, conversationId }: { message: ChatMessage; conversationId?: string | null }) {
   const isUser = message.role === "user";
+  const compactProgress = !isUser && resolveProgressView(import.meta.env.VITE_PROGRESS_VIEW, import.meta.env.DEV) === "compact";
+  const showText = !compactProgress || message.status !== "streaming";
 
   const copy = async () => {
     const text = message.result ? toClipboardText(message.result) : message.content;
@@ -17,24 +22,26 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   };
 
   return (
-    <article className={cn("group flex gap-3", isUser && "justify-end")}>
+    <article aria-label={isUser ? "用户消息" : "AI 回复"} className={cn("group flex min-w-0 gap-3", isUser && "justify-end")}>
       {!isUser && (
-        <div className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ink text-parchment">
+        <div role="img" aria-label="AI 头像" className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-moss/10 text-moss">
           <Bot className="h-4 w-4" aria-hidden="true" />
         </div>
       )}
 
-      <div className={cn("max-w-[920px] flex-1", isUser && "flex max-w-[760px] justify-end")}>
+      <div className={cn("min-w-0 max-w-[calc(100%-44px)]", isUser ? "sm:max-w-[80%]" : "w-full sm:max-w-[90%]")}>
         <div
           className={cn(
-            "relative border px-5 py-4 shadow-line",
+            "relative min-w-0 max-w-full",
             isUser
-              ? "border-ink/80 bg-ink text-parchment"
-              : "border-ink/10 bg-[#fffaf1]/78 text-ink backdrop-blur",
+              ? "rounded-[24px] bg-[#DEF3E5] px-5 py-3 text-ink"
+              : "w-full rounded-[24px] bg-[#F2F2F3] px-4 py-3 text-ink sm:px-5",
           )}
         >
-          <div className="flex items-start justify-between gap-3">
-            <p className="whitespace-pre-wrap text-[15px] leading-7">{message.content}</p>
+          {compactProgress && message.responseType !== "reply" && <ProgressList steps={message.steps} status={message.status} hasResult={message.result !== undefined || Boolean(message.results?.length)} />}
+
+          {showText && <div className="flex items-start justify-between gap-3">
+            <p className="whitespace-pre-wrap break-words text-[15px] leading-7">{message.content}</p>
             {!isUser && message.status !== "streaming" && (
               <button
                 type="button"
@@ -46,30 +53,34 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
                 <Copy className="h-4 w-4" aria-hidden="true" />
               </button>
             )}
-          </div>
+          </div>}
 
           {message.error && (
-            <div className="mt-3 border border-tomato/30 bg-tomato/10 px-3 py-2 text-sm text-tomato">
+            <div className="mt-3 rounded-xl border border-tomato/30 bg-tomato/10 px-3 py-2 text-sm text-tomato">
               {message.error}
             </div>
           )}
 
-          {!isUser && <StepRail steps={message.steps} />}
+          {!isUser && !compactProgress && <StepRail steps={message.steps} />}
           {!isUser && message.result !== undefined && <ResultTable data={message.result} />}
+          {!isUser && message.results?.map(result => <div key={result.query_result_id} className="mt-4">
+            <p className="text-xs text-ink/55">{result.query}{result.truncated ? ` · 共 ${result.row_count} 行，历史显示部分结果` : ""}</p>
+            <ResultTable data={result.data} />
+          </div>)}
+          {!isUser && conversationId && message.files?.map(file => <FileCard key={file.id} file={file} conversationId={conversationId} />)}
 
           <div
             className={cn(
               "mt-3 text-xs",
-              isUser ? "text-parchment/55" : "text-ink/45",
+              isUser ? "text-ink/35" : "text-ink/35",
             )}
           >
             {formatTime(message.createdAt)}
           </div>
         </div>
       </div>
-
       {isUser && (
-        <div className="mt-1 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-moss text-white">
+        <div role="img" aria-label="用户头像" className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-ink/10 text-ink/65">
           <UserRound className="h-4 w-4" aria-hidden="true" />
         </div>
       )}

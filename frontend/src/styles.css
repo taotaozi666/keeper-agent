@@ -26,7 +26,7 @@ body,
 
 body {
     margin: 0;
-    background: #f7f1e8;
+    background: #ffffff;
     overflow: hidden;
 }
 
@@ -39,16 +39,9 @@ textarea {
     background: rgba(47, 107, 79, 0.2);
 }
 
-.grain {
-    opacity: 0.32;
-    background-image: radial-gradient(
-        circle at 1px 1px,
-        rgba(32, 32, 29, 0.18) 1px,
-        transparent 0
-    );
-    background-size: 18px 18px;
-    mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.7), transparent 72%);
-}
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible { outline: 2px solid #2f6b4f; outline-offset: 3px; }
+* { scrollbar-width: thin; scrollbar-color: #d7dadd transparent; }
 
 @media (prefers-reduced-motion: reduce) {
     *,

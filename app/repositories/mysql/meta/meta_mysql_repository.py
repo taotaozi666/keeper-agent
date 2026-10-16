@@ -8,7 +8,7 @@ Repository 自身只关心“如何写入”，而“哪些写操作要放在同
 问数链路运行时也会从这里读取元数据，用来把召回到的 id 补齐成完整实体
 """
 
-from sqlalchemy import text
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.entities.column_info import ColumnInfo
@@ -16,6 +16,7 @@ from app.entities.column_metric import ColumnMetric
 from app.entities.metric_info import MetricInfo
 from app.entities.table_info import TableInfo
 from app.models.column_info import ColumnInfoMySQL
+from app.models.column_metric import ColumnMetricMySQL
 from app.models.table_info import TableInfoMySQL
 from app.repositories.mysql.meta.mappers.column_info_mapper import ColumnInfoMapper
 from app.repositories.mysql.meta.mappers.column_metric_mapper import ColumnMetricMapper
@@ -56,6 +57,22 @@ class MetaMySQLRepository:
             ]
         )
 
+    async def upsert_metric_infos(self, metric_infos: list[MetricInfo]):
+        """更新指标并替换其字段依赖，调用方管理事务；不影响未指定指标。"""
+        for metric in metric_infos:
+            await self.session.merge(MetricInfoMapper.to_model(metric))
+            await self.session.execute(
+                delete(ColumnMetricMySQL).where(
+                    ColumnMetricMySQL.metric_id == metric.id
+                )
+            )
+            self.save_column_metrics(
+                [
+                    ColumnMetric(column_id=column_id, metric_id=metric.id)
+                    for column_id in dict.fromkeys(metric.relevant_columns)
+                ]
+            )
+
     async def get_column_info_by_id(self, id: str) -> ColumnInfo | None:
         """按字段 id 查询字段元数据，供召回信息合并阶段补齐字段上下文"""
 
@@ -80,8 +97,10 @@ class MetaMySQLRepository:
         """查询指定表的主外键字段，避免 Join 关键字段被向量召回漏掉"""
 
         # 主外键字段用于后续生成 join 条件，不能完全依赖向量召回命中
-        sql = "select * from column_info where table_id = :table_id and role in ('primary_key','foreign_key')"
-        # :table_id 是 SQLAlchemy text SQL 的占位符，实际值通过第二个参数传入
-        result = await self.session.execute(text(sql), {"table_id": table_id})
-        # mappings() 会把结果行转成类似字典的结构，便于解包成 ColumnInfo
-        return [ColumnInfo(**dict(row)) for row in result.mappings().fetchall()]
+        statement = select(ColumnInfoMySQL).where(
+            ColumnInfoMySQL.table_id == table_id,
+            ColumnInfoMySQL.role.in_(["primary_key", "foreign_key"]),
+        )
+        result = await self.session.execute(statement)
+        # ORM 的 JSON 类型转换器确保 examples / alias 为列表。
+        return [ColumnInfoMapper.to_entity(column) for column in result.scalars().all()]

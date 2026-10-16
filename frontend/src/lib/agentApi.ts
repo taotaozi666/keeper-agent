@@ -2,12 +2,14 @@
  * 智能体接口客户端
  * 封装后端 /api/query SSE 流式接口请求与事件解析逻辑
  */
-import type { AgentEvent } from "../types/agent";
+import type { AgentEvent, ConversationTurn } from "../types/agent";
+import { consumeQueryStream } from "./sse";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 type QueryOptions = {
   signal?: AbortSignal;
+  conversationId?: string | null;
   onEvent: (event: AgentEvent) => void;
 };
 
@@ -18,7 +20,7 @@ export async function streamQuery(query: string, options: QueryOptions) {
       "Content-Type": "application/json",
       Accept: "text/event-stream",
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, conversation_id: options.conversationId ?? null }),
     signal: options.signal,
   });
 
@@ -30,49 +32,43 @@ export async function streamQuery(query: string, options: QueryOptions) {
     throw new Error("浏览器未返回可读取的流式响应。");
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
+  await consumeQueryStream(response.body, options.onEvent);
+}
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split(/\n\n/);
-    buffer = chunks.pop() ?? "";
+export async function loadConversation(id: string, signal?: AbortSignal) {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${encodeURIComponent(id)}`, { signal });
+  if (!response.ok) throw new Error(`恢复会话失败：HTTP ${response.status}，可点击新会话重新开始。`);
+  return response.json() as Promise<{ turns: ConversationTurn[] }>;
+}
 
-    for (const chunk of chunks) {
-      const event = parseSseChunk(chunk);
-      if (event) {
-        options.onEvent(event);
-      }
-    }
-  }
+export type ConversationSummary = { id: string; title: string; updated_at: string };
 
-  buffer += decoder.decode();
-  const tail = parseSseChunk(buffer);
-  if (tail) {
-    options.onEvent(tail);
+export async function listConversations(offset = 0, signal?: AbortSignal) {
+  const response = await fetch(`${API_BASE_URL}/api/conversations?limit=30&offset=${offset}`, { signal });
+  if (!response.ok) throw new Error(`加载历史会话失败：HTTP ${response.status}`);
+  return response.json() as Promise<{ items: ConversationSummary[]; has_more: boolean }>;
+}
+
+
+export async function changeConversationDeleted(id: string, deleted: boolean) {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${encodeURIComponent(id)}${deleted ? "" : "/restore"}`, { method: deleted ? "DELETE" : "POST" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `操作失败：HTTP ${response.status}`);
   }
 }
 
-function parseSseChunk(chunk: string): AgentEvent | null {
-  const payload = chunk
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.replace(/^data:\s?/, ""))
-    .join("\n")
-    .trim();
 
-  if (!payload) return null;
-
-  try {
-    return JSON.parse(payload) as AgentEvent;
-  } catch {
-    return {
-      type: "error",
-      message: `无法解析后端事件：${payload}`,
-    };
+export async function downloadArtifact(conversationId: string, fileId: string, name: string) {
+  const response = await fetch(`${API_BASE_URL}/api/conversations/${encodeURIComponent(conversationId)}/files/${encodeURIComponent(fileId)}/download`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.detail ?? `下载失败：HTTP ${response.status}`);
   }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url; link.download = name;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }

@@ -12,6 +12,8 @@ from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.llm import llm
+from app.agent.observability import invoke_model
+from app.agent.prompt_context import prompt_tables
 from app.agent.state import DataAgentState
 from app.core.log import logger
 from app.prompt.prompt_loader import load_prompt
@@ -26,7 +28,7 @@ async def correct_sql(state: DataAgentState, runtime: Runtime[DataAgentContext])
 
     try:
         # 校正 SQL 仍然需要完整上下文，避免模型只根据报错修语法却改丢业务语义
-        table_infos = state["table_infos"]
+        table_infos = prompt_tables(state)
         metric_infos = state["metric_infos"]
         date_info = state["date_info"]
         db_info = state["db_info"]
@@ -50,9 +52,11 @@ async def correct_sql(state: DataAgentState, runtime: Runtime[DataAgentContext])
         )
         # 修正后的输出仍然是一条纯 SQL 文本，用来覆盖 state["sql"]
         output_parser = StrOutputParser()
-        chain = prompt | llm | output_parser
 
-        result = await chain.ainvoke(
+        result = await invoke_model(
+            prompt,
+            llm,
+            output_parser,
             {
                 # 与生成节点保持一致，用 YAML 向模型提供稳定 可读的结构化上下文
                 "table_infos": yaml.dump(
@@ -66,12 +70,18 @@ async def correct_sql(state: DataAgentState, runtime: Runtime[DataAgentContext])
                 "query": query,
                 "sql": sql,
                 "error": error,
-            }
+            },
+            stage="correct_sql",
         )
 
-        logger.info(f"校正后的SQL：{result}")
+        logger.info(
+            "模型修正SQL attempt={} output_chars={} sql=\n{}",
+            state.get("repair_count", 0) + 1,
+            len(result),
+            result,
+        )
         writer({"type": "progress", "step": step, "status": "success"})
-        return {"sql": result}
+        return {"sql": result, "repair_count": state.get("repair_count", 0) + 1}
     except Exception as e:
         logger.error(f"{step} failed: {e}")
         writer({"type": "progress", "step": step, "status": "error"})

@@ -28,6 +28,17 @@ function formatCell(value: unknown) {
 
 export function ResultTable({ data }: { data: unknown }) {
   const rows = normalizeRows(data);
+  if (rows.length === 0) {
+    return (
+      <section role="status" className="mt-4 rounded-2xl border border-ink/10 bg-white/70 px-4 py-4 text-sm text-ink/65 shadow-line">
+        <div className="flex items-center gap-2 font-semibold">
+          <Database className="h-4 w-4 text-moss" aria-hidden="true" />
+          查询结果 · 0 行
+        </div>
+        <p className="mt-2">没有符合当前筛选条件的数据，可以调整时间范围或筛选条件后重试。</p>
+      </section>
+    );
+  }
   const columns = Array.from(
     rows.reduce((keys, row) => {
       Object.keys(row).forEach((key) => keys.add(key));
@@ -40,7 +51,7 @@ export function ResultTable({ data }: { data: unknown }) {
   }
 
   return (
-    <section className="mt-4 overflow-hidden border border-ink/10 bg-white/70 shadow-line">
+    <section className="mt-4 overflow-hidden rounded-2xl border border-ink/10 bg-white/70 shadow-line">
       <div className="flex items-center justify-between border-b border-ink/10 px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink">
           <Database className="h-4 w-4 text-moss" aria-hidden="true" />
@@ -53,7 +64,7 @@ export function ResultTable({ data }: { data: unknown }) {
       </div>
       <div className="max-h-[360px] overflow-auto">
         <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-          <thead className="sticky top-0 z-10 bg-[#efe6d8]">
+          <thead className="sticky top-0 z-10 bg-[#f5f6f7]">
             <tr>
               {columns.map((column) => (
                 <th
@@ -68,9 +79,9 @@ export function ResultTable({ data }: { data: unknown }) {
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className="odd:bg-white/45 even:bg-white/20">
+              <tr key={rowIndex} className="bg-white transition hover:bg-[#f8faf9]">
                 {columns.map((column) => (
-                  <td key={column} className="border-b border-ink/5 px-4 py-3 text-ink/80">
+                  <td key={column} className="border-b border-ink/5 px-4 py-3 text-ink/80 break-words max-w-[400px]">
                     {formatCell(row[column])}
                   </td>
                 ))}

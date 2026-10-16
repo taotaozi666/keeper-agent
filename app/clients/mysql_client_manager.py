@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.conf.app_config import DBConfig, app_config
+from app.core.db_logging import configure_db_logging
 
 
 class MySQLClientManager:
@@ -39,6 +40,7 @@ class MySQLClientManager:
 
     def init(self):
         """初始化 Engine 和 Session 工厂"""
+        configure_db_logging()
         # 创建异步 Engine，相当于先把“数据库连接能力”准备好
         self.engine = create_async_engine(
             self._get_url(), pool_size=10, pool_pre_ping=True
